@@ -10,7 +10,7 @@ Future<void> checkForUpdate() async {
     if(info?.updateAvailability ==
         UpdateAvailability.updateAvailable){
       InAppUpdate.performImmediateUpdate()
-          .catchError((e) => print("fff"));
+          .catchError((e) => print("No Updates"));
     }
 
   }).catchError((e) {

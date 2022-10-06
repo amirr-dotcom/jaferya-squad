@@ -1,0 +1,96 @@
+version: 2.1
+
+orbs:
+  android: circleci/android@2.0.0
+  flutter-orb: circleci/flutter@1.0.1
+  ruby: circleci/ruby@1.6.0
+  aws-s3: circleci/aws-s3@3.0.0
+
+jobs:
+  integration_test_android:
+    executor:
+      name: android/android-machine
+      resource-class: xlarge
+      tag: 2022.03.1
+    steps:
+      - checkout
+      - flutter-orb/install_sdk_and_pub:
+          cache-version: machine
+          flutter_version: 3.0.0
+      - android/create-avd:
+          avd-name: flutter
+          install: true
+          system-image: system-images;android-29;default;x86
+      - android/start-emulator:
+          avd-name: flutter
+          post-emulator-launch-assemble-command: 'flutter build apk --debug'
+          restore-gradle-cache-find-args: ./android -name 'build.gradle'
+      - android/run-tests:
+          test-command: flutter drive --target=test_driver/widget_test.dart
+      - store_artifacts:
+          path: demo
+  sonar-scan:
+    machine:
+      image: ubuntu-2004:current
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Sonar Test & Scan
+          command: |
+            wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.0.1-stable.tar.xz
+            tar xf flutter_linux_3.0.1-stable.tar.xz
+            export PATH="$PATH:`pwd`/flutter/bin"
+            wget -q https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-3.2.0.1227-linux.zip
+            unzip -qq sonar-scanner-cli-3.2.0.1227-linux.zip
+            cp sonar-scanner.properties sonar-scanner-3.2.0.1227-linux/conf/sonar-scanner.properties
+            ./sonar-scanner-3.2.0.1227-linux/bin/sonar-scanner -Dsonar.host.url=$SONAR_HOST -Dsonar.login=$SONAR_TOKEN -Dsonar.projectName=$projectName -Dsonar.projectKey=$projectKey -Dsonar.projectVersion=$projectVersion
+  distribute_android:
+    executor:
+      name: android/android-docker
+      resource-class: xlarge
+      tag: 2022.03.1
+    steps:
+      - checkout
+      - flutter-orb/install_sdk_and_pub:
+          cache-version: docker
+          flutter_version: 3.0.0
+      - flutter-orb/install_android_gradle
+      - ruby/install-deps:
+          app-dir: android
+          key: android
+      - run:
+          name: Playstore Deploy - Android Beta
+          command: |
+            echo -n $GOOGLE_KEY | base64 --decode > ./app/service_account_key.json
+            bundle exec fastlane android beta
+          working_directory: android
+
+workflows:
+  Test & Scan:
+    when:
+      and:
+        - not:
+            matches:
+              pattern: '^main$'
+              value: << pipeline.git.branch >>
+        - or:
+            - matches:
+                pattern: /feature\/.*/
+                value: << pipeline.git.branch >>
+
+    jobs:
+      - flutter-orb/unit_test:
+          version: 2.10.3
+      - flutter-orb/lint:
+          version: 2.10.3
+      - sonar-scan
+
+  Build & Distribute:
+    when:
+      equal: [main, << pipeline.git.branch >>]
+
+    jobs:
+      - distribute_android:
+          context: # Context
+            - flutter-demo

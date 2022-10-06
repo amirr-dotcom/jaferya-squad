@@ -13,26 +13,123 @@
 # Uncomment the line if you want fastlane to automatically update itself
 # update_fastlane
 
+ENV["GIT_USERNAME"] = ENV["CIRCLE_USERNAME"] || "amirr-dotcom"
+ENV["GIT_EMAIL"] = "shaizeeabbas.sa@gmail.com"
+
 default_platform(:android)
 
 platform :android do
-  desc "Runs all the tests"
-  lane :test do
-    gradle(task: "test")
-  end
+		# Playstore Release Lanes
 
-  desc "Submit a new Beta Build to Crashlytics Beta"
-  lane :beta do
-    gradle(task: "clean assembleRelease")
-    crashlytics
-  
-    # sh "your_script.sh"
-    # You can also use other beta testing services here
-  end
+	desc "Analyze Commits and create the next tag"
+	private_lane :pre_deploy do |options|
+		flavor = options[:flavor]
+		isReleasable = analyze_commits(match: "android*")
+		puts "isReleasable: #{isReleasable}"
+		if isReleasable
+			next_version = lane_context[SharedValues::RELEASE_NEXT_VERSION]
+			puts "Next version: #{next_version}"
 
-  desc "Deploy a new version to the Google Play"
-  lane :deploy do
-    gradle(task: "clean assembleRelease")
-    upload_to_play_store
-  end
+			# Git Username set
+			sh("git config user.name #{ENV["GIT_USERNAME"]}")
+			sh("git config user.email #{ENV["GIT_EMAIL"]}")
+
+			tag_name = "android/#{flavor}/#{next_version}"
+			desc = generate_release_description(flavor: flavor, version_name: next_version)
+			add_git_tag(tag: tag_name, message: desc)
+						push_git_tags
+		end
+
+		isReleasable
+	end
+
+	desc "Generate Release Description"
+	private_lane :generate_release_description do |options|
+		flavor = options[:flavor]
+		version_name = options[:version_name]
+		author = ENV["CIRCLE_USERNAME"] || ENV["GIT_USERNAME"]
+		timestamp = DateTime.parse(DateTime.now.to_s).new_offset("+05:30").strftime("Date : %d-%b-%Y | Time : %I:%M %p")
+
+		# generates the tag description
+		description = "Release : Android | Flavor : #{flavor} | Version :  #{version_name} | Author of Tag : #{author} | #{timestamp}"
+		puts "description: #{description}"
+		description
+	end
+
+
+	desc "Generate changelog and add it to the changelog file"
+	private_lane :generate_changelog do |options|
+		version_code = options[:version_code]
+
+		notes = conventional_changelog(display_title: false, format: 'plain', display_links: false)
+		puts "notes: #{notes}"
+
+		# create a file and then write the notes to it
+		File.open("./metadata/android/en-US/changelogs/#{version_code}.txt", "w") do |f|
+			f.write(notes)
+		end
+	end
+
+
+	desc "Generate Version Code for android release"
+	private_lane :generate_vc do
+		version_name = lane_context[SharedValues::RELEASE_NEXT_VERSION]
+
+		# generate version code from version name : major*1000000 + minor*1000 + patch
+		version_code = 0
+		version_code += version_name.split(".")[0].to_i * 1000000
+		version_code += version_name.split(".")[1].to_i * 1000
+		version_code += version_name.split(".")[2].to_i
+		version_code
+	end
+
+
+	desc "Build and Deploy Android Release"
+	private_lane :android_release do |options|
+		flavor = options[:flavor]
+
+		isReleasable = pre_deploy(flavor: flavor)
+		next_version = lane_context[SharedValues::RELEASE_NEXT_VERSION]
+		version_name = flavor == "beta" ? "#{next_version}-beta" : next_version
+		version_code = generate_vc()
+
+		puts "version_name: #{version_name}"
+		puts "version_code: #{version_code}"
+		puts "flavor: #{flavor}"
+		puts "isReleasable: #{isReleasable}"
+
+		#  if isReleasable, then submit to beta track
+		if isReleasable
+			generate_changelog(version_code: version_code)
+			gradle(
+				tasks: ['clean', 'bundleRelease'],
+				print_command_output: false,
+				properties: {
+					'vcode' => version_code,
+					'vname' => next_version
+				}
+			)
+			upload_to_play_store(
+				track: flavor,
+				aab: '../build/app/outputs/bundle/release/app-release.aab',
+				skip_upload_metadata: true,
+				skip_upload_images: true,
+				skip_upload_screenshots: true,
+				skip_upload_apk: true,
+				# skip_upload_changelogs: true,
+				version_name: "#{version_name}",
+			)
+		end
+	end
+
+
+	desc "Submit a new Build to Beta Track"
+	lane :beta do
+		android_release(flavor: "beta")
+	end
+			desc "Submit a new Release build to Production Track"
+	lane :production do
+		android_release(flavor: "production")
+	end
 end
+

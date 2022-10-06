@@ -25,6 +25,34 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
+
+
+
+
+def verCode = project.getProperties().get("vcode")
+def verName = project.getProperties().get("vname")
+
+// Sets Version Code if present in properties
+if (project.hasProperty("vcode")) {
+    println "vcode: " + project.vcode
+    verCode = vcode as int
+}
+else {
+    println "vcode not found in properties"
+    verCode = 1000
+}
+
+// Sets Version Name if present in properties
+if (project.hasProperty("vname")) {
+    println "vname: " + project.vname
+    verName = vname
+}
+else {
+    println "vname not found in properties"
+    verName = "1.0.0"
+}
+
+
 android {
     compileSdkVersion flutter.compileSdkVersion
 
@@ -46,8 +74,8 @@ android {
         applicationId "com.devnation.jaferya_squard"
         minSdkVersion flutter.minSdkVersion=23
         targetSdkVersion flutter.targetSdkVersion
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
+        versionCode verCode
+        versionName "${verName}"
     }
 
     buildTypes {
